@@ -1,0 +1,25 @@
+RewriteEngine On
+
+# If the file exists, don't apply rewrite rules
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# Base directory path (change this if your project is in a subdirectory)
+RewriteBase /pura/
+
+# Redirect root to state.php
+RewriteRule ^$ state.php [L]
+RewriteRule ^index\.php$ state.php [L]
+
+# Allow direct access to PHP files
+RewriteRule ^(state|district|subdistrict|villages)\.php$ $1.php [L,QSA]
+
+# Rewrite rule for subdistrict pages (must come before district rule)
+RewriteRule ^([^/]+)/([^/]+)/([^/]+)/?$ villages.php?state_name=$1&district_name=$2&subdistrict_name=$3 [QSA,L]
+
+# Rewrite rule for district pages
+RewriteRule ^([^/]+)/([^/]+)/?$ subdistrict.php?state_name=$1&district_name=$2 [QSA,L]
+
+# Rewrite rule for state pages (but not state.php itself)
+RewriteCond %{REQUEST_URI} !^/pura/state\.php
+RewriteRule ^([^/]+)/?$ district.php?state_name=$1 [QSA,L] 
