@@ -1,3 +1,7 @@
+<FilesMatch "\.php$">
+    Require all granted
+</FilesMatch>
+
 RewriteEngine On
 
 # If the file exists, don't apply rewrite rules
@@ -12,7 +16,10 @@ RewriteRule ^$ state.php [L]
 RewriteRule ^index\.php$ state.php [L]
 
 # Allow direct access to PHP files
-RewriteRule ^(state|district|subdistrict|villages)\.php$ $1.php [L,QSA]
+RewriteRule ^(state|district|subdistrict|villages|village-details)\.php$ $1.php [L,QSA]
+
+# Rewrite rule for village details pages (must come before subdistrict rule)
+RewriteRule ^([^/]+)/([^/]+)/([^/]+)/([^/]+)/?$ village-details.php?state_name=$1&district_name=$2&subdistrict_name=$3&village_name=$4 [QSA,L]
 
 # Rewrite rule for subdistrict pages (must come before district rule)
 RewriteRule ^([^/]+)/([^/]+)/([^/]+)/?$ villages.php?state_name=$1&district_name=$2&subdistrict_name=$3 [QSA,L]
