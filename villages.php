@@ -152,11 +152,11 @@ HTML;
     }
 
     // Optimized query to get IDs and data in one go with proper indexing
-    $idQuery = "SELECT DISTINCT v1.State, v1.District, v1.Subdistt, v1.Name as SubdistrictName, 
+    $idQuery = "SELECT v1.State, v1.District, v1.Subdistt, v1.Name as SubdistrictName, 
                        s.Name as StateName, d.Name as DistrictName
-                FROM VillageData v1 
-                JOIN VillageData s ON v1.State = s.State 
-                JOIN VillageData d ON v1.State = d.State AND v1.District = d.District
+                FROM census_data v1 
+                JOIN census_data s ON v1.State = s.State 
+                JOIN census_data d ON v1.State = d.State AND v1.District = d.District
                 WHERE UPPER(s.Name) = ? 
                 AND UPPER(d.Name) = ?
                 AND UPPER(v1.Name) = ?
@@ -211,7 +211,7 @@ HTML;
 
         // Optimized count query with proper indexing
         $countSql = "SELECT COUNT(*) as total 
-                     FROM VillageData 
+                     FROM census_data 
                      $where";
         $stmt = $conn->prepare($countSql);
         if ($stmt === false) {
@@ -230,7 +230,7 @@ HTML;
         // Optimized main query with specific columns and proper indexing
         $sql = "SELECT Town_Village, Ward, EB, Name, TRU, No_HH, TOT_P,
                        State, District, Subdistt
-                FROM VillageData 
+                FROM census_data 
                 $where
                 ORDER BY Name ASC
                 LIMIT ? OFFSET ?";
@@ -311,7 +311,7 @@ HTML;
         if (isset($_GET['debug'])) {
             echo "<div class='bg-gray-100 p-4 mb-4'>";
             echo "Available states in database:<br>";
-            $debugQuery = "SELECT DISTINCT Name FROM VillageData WHERE Level='STATE' ORDER BY Name";
+            $debugQuery = "SELECT DISTINCT Name FROM census_data WHERE Level='STATE' ORDER BY Name";
             $debugResult = $conn->query($debugQuery);
             while ($row = $debugResult->fetch_assoc()) {
                 echo "- " . htmlspecialchars($row['Name']) . "<br>";

@@ -42,12 +42,12 @@ try {
         $search_state_name = reverseCleanUrl($state_name);
         $search_district_name = reverseCleanUrl($district_name);
         
-        // Optimized query to get all required data in one go
-        $sql = "SELECT DISTINCT s.State, s.District, s.Subdistt, s.Name as SubdistrictName,
+        // Optimized query using JOINs and proper indexing
+        $sql = "SELECT s.State, s.District, s.Subdistt, s.Name as SubdistrictName,
                        d.Name as DistrictName, st.Name as StateName
-                FROM VillageData s
-                JOIN VillageData d ON s.State = d.State AND s.District = d.District
-                JOIN VillageData st ON s.State = st.State
+                FROM census_data s
+                JOIN census_data d ON s.State = d.State AND s.District = d.District
+                JOIN census_data st ON s.State = st.State
                 WHERE UPPER(st.Name) = ? 
                 AND UPPER(d.Name) = ?
                 AND st.Level = 'STATE'
@@ -65,6 +65,11 @@ try {
             $districtName = $firstRow['DistrictName'];
             $stateName = $firstRow['StateName'];
             $result->data_seek(0); // Reset result pointer
+
+            // Set cache headers for better performance
+            header('Cache-Control: public, max-age=86400'); // Cache for 24 hours since subdistrict list rarely changes
+            header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time() + 86400));
+            header('Vary: Accept-Encoding');
         } else {
             throw new Exception("State or district not found.");
         }

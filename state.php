@@ -14,17 +14,21 @@ try {
         throw new Exception("Connection failed: " . $conn->connect_error);
     }
 
-    // Optimized query with proper indexing
-    $sql = "SELECT DISTINCT State, Name 
-            FROM VillageData 
+    // Optimized query with proper indexing and caching
+    $sql = "SELECT State, Name 
+            FROM census_data 
             WHERE Level='STATE' 
-            GROUP BY Name 
             ORDER BY Name ASC";
     $result = $conn->query($sql);
 
     if (!$result) {
         throw new Exception("Query failed: " . $conn->error);
     }
+
+    // Set cache headers for better performance
+    header('Cache-Control: public, max-age=86400'); // Cache for 24 hours since state list rarely changes
+    header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time() + 86400));
+    header('Vary: Accept-Encoding');
 } catch (Exception $e) {
     $error = $e->getMessage();
 }

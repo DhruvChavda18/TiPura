@@ -20,174 +20,135 @@ function reverseCleanUrl($str) {
     return strtoupper(trim($str));
 }
 
-// Get parameters from URL
-$state_name = $_GET['state_name'] ?? '';
-$district_name = $_GET['district_name'] ?? '';
-$subdistrict_name = $_GET['subdistrict_name'] ?? '';
-$village_name = $_GET['village_name'] ?? '';
-
-// Convert URL-friendly names back to proper format
-$state = reverseCleanUrl($state_name);
-$district = reverseCleanUrl($district_name);
-$subdistrict = reverseCleanUrl($subdistrict_name);
-$village = reverseCleanUrl($village_name);
-
-// Function to get PIN code using multiple APIs with caching
+// Function to get PIN code using multiple APIs
 function getPinCode($village, $subdistrict, $district, $state) {
-    // Create cache directory if it doesn't exist
-    if (!file_exists("pin_codes")) {
-        mkdir("pin_codes", 0777, true);
-    }
-
-    // Generate cache key
-    $cache_key = md5($village . $subdistrict . $district . $state);
-    $cache_file = "pin_codes/{$cache_key}.txt";
-
-    // Check cache first
-    if (file_exists($cache_file)) {
-        $cached_data = file_get_contents($cache_file);
-        if ($cached_data !== false) {
-            return $cached_data;
+    // Try postalpincode.in /postoffice/{village}
+    $url = "https://api.postalpincode.in/postoffice/" . urlencode($village);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    if (isset($data[0]['PostOffice']) && !empty($data[0]['PostOffice'])) {
+        foreach ($data[0]['PostOffice'] as $office) {
+            // Try to match district/state if possible
+            if ((isset($office['District']) && stripos($office['District'], $district) !== false) ||
+                (isset($office['State']) && stripos($office['State'], $state) !== false)) {
+                return $office['Pincode'];
+            }
         }
+        // If no match, return the first found
+        return $data[0]['PostOffice'][0]['Pincode'];
     }
 
-    // Initialize cURL multi handle
-    $mh = curl_multi_init();
-    $handles = [];
+    // Try postalpincode.in /postoffice/{village, district}
+    $url = "https://api.postalpincode.in/postoffice/" . urlencode("$village $district");
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    if (isset($data[0]['PostOffice']) && !empty($data[0]['PostOffice'])) {
+        return $data[0]['PostOffice'][0]['Pincode'];
+    }
 
-    // Prepare search query
+    // Try postalpincode.in /postoffice/{village, state}
+    $url = "https://api.postalpincode.in/postoffice/" . urlencode("$village $state");
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    if (isset($data[0]['PostOffice']) && !empty($data[0]['PostOffice'])) {
+        return $data[0]['PostOffice'][0]['Pincode'];
+    }
+
+    // Try Nominatim as before
     $search_query = urlencode("$village, $subdistrict, $district, $state, India");
-    
-    // Prepare multiple API URLs
-    $api_urls = [
-        "postalpincode" => "https://api.postalpincode.in/pincode/" . $search_query,
-        "postalpincode2" => "https://api.postalpincode.in/postoffice/" . urlencode($village),
-        "nominatim" => "https://nominatim.openstreetmap.org/search?q=$search_query&format=json&limit=1",
-        "nominatim2" => "https://nominatim.openstreetmap.org/search?q=" . urlencode("$village post office, $subdistrict, $district, $state, India") . "&format=json&limit=1"
-    ];
-
-    // Initialize cURL handles for each API
-    foreach ($api_urls as $key => $url) {
+    $nominatim_url = "https://nominatim.openstreetmap.org/search?q=$search_query&format=json&limit=1";
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $nominatim_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    if (!empty($data)) {
+        $lat = $data[0]['lat'];
+        $lon = $data[0]['lon'];
+        $reverse_url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=18&addressdetails=1";
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_multi_add_handle($mh, $ch);
-        $handles[$key] = $ch;
-    }
-
-    // Execute parallel requests
-    $running = null;
-    do {
-        curl_multi_exec($mh, $running);
-    } while ($running);
-
-    // Process responses
-    $pin_code = null;
-    foreach ($handles as $key => $ch) {
-        $response = curl_multi_getcontent($ch);
-        $data = json_decode($response, true);
-
-        if (($key === "postalpincode" || $key === "postalpincode2") && 
-            isset($data[0]['PostOffice']) && !empty($data[0]['PostOffice'])) {
-            $pin_code = $data[0]['PostOffice'][0]['Pincode'];
-            break;
-        } elseif (($key === "nominatim" || $key === "nominatim2") && !empty($data)) {
-            $lat = $data[0]['lat'];
-            $lon = $data[0]['lon'];
-            
-            // Use reverse geocoding to get address details
-            $reverse_url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=18&addressdetails=1";
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $reverse_url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            $response = curl_exec($ch);
-            curl_close($ch);
-
-            $data = json_decode($response, true);
-            if (isset($data['address']['postcode'])) {
-                $pin_code = $data['address']['postcode'];
-                break;
-            }
-        }
-    }
-
-    // Clean up
-    foreach ($handles as $ch) {
-        curl_multi_remove_handle($mh, $ch);
-    }
-    curl_multi_close($mh);
-
-    // If still no PIN code found, try Google search pattern
-    if (!$pin_code) {
-        // Try different search patterns
-        $search_patterns = [
-            "PIN Code of $district/$subdistrict/$village",
-            "PIN Code of $village village $subdistrict $district",
-            "Postal Code of $village $subdistrict $district",
-            "$village village PIN Code $subdistrict $district"
-        ];
-
-        foreach ($search_patterns as $pattern) {
-            $search_url = "https://www.google.com/search?q=" . urlencode($pattern);
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $search_url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            $response = curl_exec($ch);
-            curl_close($ch);
-
-            // Look for 6-digit PIN code in the response
-            if (preg_match('/\b\d{6}\b/', $response, $matches)) {
-                $pin_code = $matches[0];
-                break;
-            }
-        }
-    }
-
-    // If still no PIN code found, try to get from nearby post office
-    if (!$pin_code) {
-        $nearby_url = "https://nominatim.openstreetmap.org/search?q=" . urlencode("post office near $village, $subdistrict, $district, $state, India") . "&format=json&limit=1";
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $nearby_url);
+        curl_setopt($ch, CURLOPT_URL, $reverse_url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         $response = curl_exec($ch);
         curl_close($ch);
-
         $data = json_decode($response, true);
-        if (!empty($data)) {
-            $lat = $data[0]['lat'];
-            $lon = $data[0]['lon'];
-            
-            $reverse_url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=18&addressdetails=1";
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $reverse_url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            $response = curl_exec($ch);
-            curl_close($ch);
-
-            $data = json_decode($response, true);
-            if (isset($data['address']['postcode'])) {
-                $pin_code = $data['address']['postcode'];
-            }
+        if (isset($data['address']['postcode'])) {
+            return $data['address']['postcode'];
         }
     }
 
-    // Save to cache if we found a PIN code
-    if ($pin_code) {
-        file_put_contents($cache_file, $pin_code);
-        return $pin_code;
+    // Try Google search scraping
+    $search_patterns = [
+        "PIN Code of $district/$subdistrict/$village",
+        "PIN Code of $village village $subdistrict $district",
+        "Postal Code of $village $subdistrict $district",
+        "$village village PIN Code $subdistrict $district"
+    ];
+    foreach ($search_patterns as $pattern) {
+        $search_url = "https://www.google.com/search?q=" . urlencode($pattern);
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $search_url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        $response = curl_exec($ch);
+        curl_close($ch);
+        if (preg_match('/\\b\\d{6}\\b/', $response, $matches)) {
+            return $matches[0];
+        }
     }
 
-    return "PIN Code not available";
+    // Try nearby post office search (Nominatim)
+    $nearby_url = "https://nominatim.openstreetmap.org/search?q=" . urlencode("post office near $village, $subdistrict, $district, $state, India") . "&format=json&limit=1";
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $nearby_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    $response = curl_exec($ch);
+    curl_close($ch);
+    $data = json_decode($response, true);
+    if (!empty($data)) {
+        $lat = $data[0]['lat'];
+        $lon = $data[0]['lon'];
+        $reverse_url = "https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lon&zoom=18&addressdetails=1";
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $reverse_url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'VillageDetailsBot/1.0');
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        $response = curl_exec($ch);
+        curl_close($ch);
+        $data = json_decode($response, true);
+        if (isset($data['address']['postcode'])) {
+            return $data['address']['postcode'];
+        }
+    }
+
+    return "Not Available";
 }
 
 // Function to generate a Google Maps iframe for a village
@@ -207,6 +168,132 @@ function google_maps_iframe($village, $taluka = '', $district = '', $state = '')
 HTML;
 }
 
+// Function to generate descriptive paragraph from census data
+function generateVillageDescription($data) {
+    $desc = "The village of " . $data['Name'] . ", classified as a " . strtolower($data['TRU']) . " settlement, ";
+    
+    // Population and households
+    $desc .= "consists of " . $data['No_HH'] . " households with a total population of " . $data['TOT_P'] . " individuals, ";
+    $desc .= "of which " . $data['TOT_M'] . " are male and " . $data['TOT_F'] . " are female. ";
+    
+    // Children under 6
+    if ($data['P_06'] > 0) {
+        $desc .= "There are " . $data['P_06'] . " children under the age of 6 (" . $data['M_06'] . " male and " . $data['F_06'] . " female), ";
+    } else {
+        $desc .= "There are no children under the age of 6, ";
+    }
+    
+    // SC/ST population
+    if ($data['P_SC'] > 0 || $data['P_ST'] > 0) {
+        $desc .= "and the village has ";
+        if ($data['P_SC'] > 0) {
+            $desc .= $data['P_SC'] . " Scheduled Caste (SC) individuals (" . $data['M_SC'] . " male and " . $data['F_SC'] . " female) ";
+        }
+        if ($data['P_SC'] > 0 && $data['P_ST'] > 0) {
+            $desc .= "and ";
+        }
+        if ($data['P_ST'] > 0) {
+            $desc .= $data['P_ST'] . " Scheduled Tribe (ST) individuals (" . $data['M_ST'] . " male and " . $data['F_ST'] . " female) ";
+        }
+    } else {
+        $desc .= "and the village has no Scheduled Caste (SC) or Scheduled Tribe (ST) population. ";
+    }
+    
+    // Literacy
+    if ($data['P_LIT'] > 0) {
+        $desc .= "Literacy is present, with " . $data['P_LIT'] . " literate individuals (" . $data['M_LIT'] . " male and " . $data['F_LIT'] . " female) ";
+        if ($data['P_ILL'] > 0) {
+            $desc .= "and " . $data['P_ILL'] . " illiterate individuals (" . $data['M_ILL'] . " male and " . $data['F_ILL'] . " female). ";
+        } else {
+            $desc .= "and no illiterate individuals. ";
+        }
+    } else {
+        $desc .= "There are no literate individuals in the village. ";
+    }
+    
+    // Work status
+    if ($data['TOT_WORK_P'] > 0) {
+        $desc .= "In terms of work status, " . $data['TOT_WORK_P'] . " individuals are engaged in work activities (" . $data['TOT_WORK_M'] . " male and " . $data['TOT_WORK_F'] . " female). ";
+        
+        // Main workers
+        if ($data['MAINWORK_P'] > 0) {
+            $desc .= "Among these, " . $data['MAINWORK_P'] . " are main workers (" . $data['MAINWORK_M'] . " male and " . $data['MAINWORK_F'] . " female), ";
+            if ($data['MAIN_CL_P'] > 0 || $data['MAIN_AL_P'] > 0 || $data['MAIN_HH_P'] > 0 || $data['MAIN_OT_P'] > 0) {
+                $desc .= "including ";
+                $workTypes = [];
+                if ($data['MAIN_CL_P'] > 0) $workTypes[] = $data['MAIN_CL_P'] . " cultivators";
+                if ($data['MAIN_AL_P'] > 0) $workTypes[] = $data['MAIN_AL_P'] . " agricultural labourers";
+                if ($data['MAIN_HH_P'] > 0) $workTypes[] = $data['MAIN_HH_P'] . " household industry workers";
+                if ($data['MAIN_OT_P'] > 0) $workTypes[] = $data['MAIN_OT_P'] . " other workers";
+                $desc .= implode(", ", $workTypes) . ". ";
+            }
+        }
+        
+        // Marginal workers
+        if ($data['MARGWORK_P'] > 0) {
+            $desc .= "Additionally, " . $data['MARGWORK_P'] . " are marginal workers (" . $data['MARGWORK_M'] . " male and " . $data['MARGWORK_F'] . " female). ";
+        }
+    }
+    
+    // Non-workers
+    if ($data['NON_WORK_P'] > 0) {
+        $desc .= "There are " . $data['NON_WORK_P'] . " non-workers in the village (" . $data['NON_WORK_M'] . " male and " . $data['NON_WORK_F'] . " female). ";
+    } else {
+        $desc .= "There are no non-workers in the village, highlighting a 100% workforce participation rate. ";
+    }
+    
+    return $desc;
+}
+
+// Get parameters from URL
+$state_name = $_GET['state_name'] ?? '';
+$district_name = $_GET['district_name'] ?? '';
+$subdistrict_name = $_GET['subdistrict_name'] ?? '';
+$village_name = $_GET['village_name'] ?? '';
+
+// Convert URL-friendly names back to proper format
+$state = reverseCleanUrl($state_name);
+$district = reverseCleanUrl($district_name);
+$subdistrict = reverseCleanUrl($subdistrict_name);
+$village = reverseCleanUrl($village_name);
+
+// Get village data from database
+try {
+    $conn = new mysqli("in-mum-web841.main-hosting.eu", "u133954830_bharat", "u!V7ooV5LfND", "u133954830_bharat");
+    if ($conn->connect_error) {
+        throw new Exception("Connection failed: " . $conn->connect_error);
+    }
+
+    // Optimized query using JOINs instead of subqueries
+    $sql = "SELECT v.* 
+            FROM census_data v
+            JOIN census_data s ON v.State = s.State AND s.Level = 'STATE' AND s.Name = ?
+            JOIN census_data d ON v.State = d.State AND v.District = d.District AND d.Level = 'DISTRICT' AND d.Name = ?
+            JOIN census_data sd ON v.State = sd.State AND v.District = sd.District AND v.Subdistt = sd.Subdistt AND sd.Level = 'SUB-DISTRICT' AND sd.Name = ?
+            WHERE v.Level = 'VILLAGE' 
+            AND v.Name = ?
+            LIMIT 1";
+    
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ssss", $state, $district, $subdistrict, $village);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows > 0) {
+        $village_data = $result->fetch_assoc();
+        $village_description = generateVillageDescription($village_data);
+    } else {
+        $village_description = "No detailed census data available for this village.";
+    }
+} catch (Exception $e) {
+    $village_description = "Error fetching village data: " . $e->getMessage();
+}
+
+// Set cache headers for better performance
+header('Cache-Control: public, max-age=3600'); // Cache for 1 hour
+header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time() + 3600));
+header('Vary: Accept-Encoding');
+
 // Get PIN code for the village
 $village_code = getPinCode($village, $subdistrict, $district, $state);
 
@@ -219,8 +306,6 @@ $state_url = cleanUrlString($state);
 $district_url = cleanUrlString($district);
 $subdistrict_url = cleanUrlString($subdistrict);
 
-// Set cache headers
-header('Cache-Control: public, max-age=3600'); // Cache for 1 hour
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -261,6 +346,19 @@ header('Cache-Control: public, max-age=3600'); // Cache for 1 hour
 
                 <h2 class="text-xl font-semibold mb-4"><?php echo htmlspecialchars($village); ?> on Google Map</h2>
                 <?php echo $map_html; ?>
+
+                <!-- Village Description -->
+                <div class="mt-6 bg-gray-50 p-6 rounded-lg">
+                    <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700">
+                        <p class="text-sm">
+                            <strong>Note:</strong> The demographic and socio-economic information presented below is based on the 2011 Census of India data.
+                        </p>
+                    </div>
+                    <h2 class="text-xl font-semibold mb-4">Village Details</h2>
+                    <p class="text-gray-700 leading-relaxed">
+                        <?php echo htmlspecialchars($village_description); ?>
+                    </p>
+                </div>
             </div>
         </div>
     </div>

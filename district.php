@@ -40,10 +40,10 @@ try {
         // Convert URL-friendly state name back to database format
         $search_state_name = reverseCleanUrl($state_name);
         
-        // Optimized query to get state and districts in one go
-        $sql = "SELECT DISTINCT d.State, d.District, d.Name as DistrictName, s.Name as StateName
-                FROM VillageData d
-                JOIN VillageData s ON d.State = s.State 
+        // Optimized query using JOINs and proper indexing
+        $sql = "SELECT d.State, d.District, d.Name as DistrictName, s.Name as StateName
+                FROM census_data d
+                JOIN census_data s ON d.State = s.State 
                 WHERE UPPER(s.Name) = ? 
                 AND s.Level = 'STATE'
                 AND d.Level = 'DISTRICT'
@@ -58,6 +58,11 @@ try {
             $firstRow = $result->fetch_assoc();
             $stateName = $firstRow['StateName'];
             $result->data_seek(0); // Reset result pointer
+
+            // Set cache headers for better performance
+            header('Cache-Control: public, max-age=86400'); // Cache for 24 hours since district list rarely changes
+            header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time() + 86400));
+            header('Vary: Accept-Encoding');
         } else {
             throw new Exception("State not found: " . htmlspecialchars($search_state_name));
         }
